@@ -1,0 +1,123 @@
+#!/bin/bash
+
+# Set temporary folder for "deleted" files
+TEMP_FOLDER="$HOME/.safe_rm"
+LOG_FILE="$TEMP_FOLDER/safe_rm.log"
+
+# Create the temporary folder and log file if they don't exist
+mkdir -p "$TEMP_FOLDER"
+touch "$LOG_FILE"
+
+# Function to display usage
+usage() {
+    echo "Usage: $0 [-u] [-f] [-i] [-r] [-v] [-h] <file_or_directory>"
+    echo "  -u : Undo the last removal operation"
+    echo "  -f : Force removal"
+    echo "  -i : Interactive mode"
+    echo "  -r : Remove directories and their contents recursively"
+    echo "  -v : Verbose mode"
+    echo "  -h : Show help"
+}
+
+# Function to undo the last operation
+undo() {
+    if [ -s "$LOG_FILE" ]; then
+        last_line=$(tail -n 1 "$LOG_FILE")
+        src=$(echo "$last_line" | cut -d '|' -f 1)
+        dst=$(echo "$last_line" | cut -d '|' -f 2)
+
+        mv "$dst" "$src" && sed -i '$d' "$LOG_FILE"
+        echo "Operation undone: $dst restored to $src"
+    else
+        echo "Nothing to undo. Log file is empty."
+    fi
+}
+
+# Check for arguments
+if [ $# -eq 0 ]; then
+    usage
+    exit 1
+fi
+
+FORCE=0
+INTERACTIVE=0
+RECURSIVE=0
+UNDO=0
+VERBOSE=0
+
+while getopts ":ufirvh" opt; do
+    case $opt in
+        u)
+            UNDO=1
+            ;;
+        f)
+            FORCE=1
+            ;;
+        i)
+            INTERACTIVE=1
+            ;;
+        r)
+            RECURSIVE=1
+            ;;
+        v)
+            VERBOSE=1
+            ;;
+        h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Invalid option: -$OPTARG" >&2
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Shift arguments after parsing options
+shift $((OPTIND-1))
+
+if [ $UNDO -eq 1 ]; then
+    undo
+    exit 0
+fi
+
+# Function to safely remove files or directories
+safe_rm() {
+    local item=$1
+
+    if [ -e "$item" ]; then
+        if [ $INTERACTIVE -eq 1 ]; then
+            printf "Do you want to remove %s? (y/n): " "$item"
+            read -r response
+            if [ "$response" != "y" ]; then
+                return
+            fi
+        fi
+        timestamp=$(date +%Y%m%d%H%M%S%N)
+        filename=$(basename "$item")
+        backup_name="${TEMP_FOLDER}/${filename}_${timestamp}"
+
+        if [ -d "$item" ] && [ $RECURSIVE -eq 1 ]; then
+            rsync -a --info=progress2 --remove-source-files "$item/" "$backup_name/"
+            rmdir "$item"
+            echo "$item|$backup_name" >> "$LOG_FILE"
+            [ $VERBOSE -eq 1 ] && echo "Moved directory $item to $backup_name"
+        elif [ -f "$item" ]; then
+                rsync -a --info=progress2 --remove-source-files "$item" "$backup_name"
+                echo "$item|$backup_name" >> "$LOG_FILE"
+                [ $VERBOSE -eq 1 ] && echo "Moved file $item to $backup_name"
+        else
+                echo "Error: $item is a directory. Use the -r option to remove it."
+        fi
+    elif [ $FORCE -eq 0 ]; then
+        echo "Error: $item does not exist."
+    fi
+}
+
+Iterate over files or directories and safely remove them
+
+for item in "$@"; do
+    safe_rm "$item"
+done
+
